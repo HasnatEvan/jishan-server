@@ -156,13 +156,16 @@ async function run() {
            ===================== */
 
 
-        app.post('/products', verifyToken, async (req, res) => {
+        /* =====================
+   SAVE PRODUCT
+===================== */
+        app.post("/products", verifyToken, async (req, res) => {
             try {
                 const product = req.body;
 
                 // 🇧🇩 Bangladesh time
-                const bdTime = new Date().toLocaleString('en-US', {
-                    timeZone: 'Asia/Dhaka',
+                const bdTime = new Date().toLocaleString("en-US", {
+                    timeZone: "Asia/Dhaka",
                 });
 
                 const result = await productCollection.insertOne({
@@ -172,72 +175,223 @@ async function run() {
 
                 res.status(201).send(result);
             } catch (error) {
-                res.status(500).send({ message: 'Failed to add product' });
+                console.error("Add product error:", error);
+                res.status(500).send({ message: "Failed to add product" });
             }
         });
 
 
 
-
-        app.get('/products', async (req, res) => {
+        app.get('/all-products', async (req, res) => {
             const result = await productCollection
-                .find()
-                .sort({ _id: -1 })   // 🔥 last added → first
+                .aggregate([{ $sample: { size: 100 } }]) // 100 মানে যতগুলো চাও
                 .toArray();
 
             res.send(result);
         });
 
 
-        app.get("/categories", async (req, res) => {
-            const categories = await productCollection.aggregate([
-                {
-                    $group: {
-                        _id: "$category",
-                        categoryImage: { $first: "$categoryImage" }
-                    }
-                },
-                {
-                    $project: {
-                        _id: 0,
-                        name: "$_id",
-                        image: "$categoryImage"
-                    }
-                }
-            ]).toArray();
+        app.get("/products/search", async (req, res) => {
+            try {
+                const { q } = req.query;
 
-            res.send(categories);
+                if (!q) return res.send([]);
+
+                const result = await productCollection
+                    .find({ name: { $regex: q, $options: "i" } })
+                    .sort({ _id: -1 })
+                    .toArray();
+
+                res.send(result);
+            } catch (error) {
+                console.error("Search error:", error);
+                res.status(500).send({ message: "Search failed" });
+            }
         });
 
-        app.get("/popular-categories", async (req, res) => {
-            const categories = await productCollection.aggregate([
-                {
-                    $group: {
-                        _id: "$category",
-                        categoryImage: { $first: "$categoryImage" },
-                        count: { $sum: 1 }
-                    }
-                },
-                {
-                    $project: {
-                        _id: 0,
-                        category: "$_id",
-                        categoryImage: 1,
-                        count: 1
-                    }
-                }
-            ]).toArray();
+        /* =====================
+           GET PRODUCTS (ALL + CATEGORY WISE)
+        ===================== */
+        app.get("/products", async (req, res) => {
+            const { category } = req.query;
 
-            res.send(categories);
-        });
+            const query = category
+                ? { category: { $regex: `^${category}$`, $options: "i" } }
+                : {};
 
+            const result = await productCollection
+                .find(query)
+                .sort({ _id: -1 })
+                .toArray();
 
-        app.get('/products/:id', async (req, res) => {
-            const id = req.params.id;
-            const query = { _id: new ObjectId(id) };
-            const result = await productCollection.findOne(query);
             res.send(result);
         });
+
+
+        /* =====================
+           GET SINGLE PRODUCT
+        ===================== */
+        app.get("/products/:id", async (req, res) => {
+            try {
+                const id = req.params.id;
+
+                const result = await productCollection.findOne({
+                    _id: new ObjectId(id),
+                });
+
+                if (!result) {
+                    return res.status(404).send({ message: "Product not found" });
+                }
+
+                res.send(result);
+            } catch (error) {
+                console.error("Get product error:", error);
+                res.status(500).send({ message: "Failed to load product" });
+            }
+        });
+
+        /* =====================
+           GET CATEGORIES
+        ===================== */
+        app.get("/categories", async (req, res) => {
+            try {
+                const categories = await productCollection
+                    .aggregate([
+                        {
+                            $group: {
+                                _id: "$category",
+                                categoryImage: { $first: "$categoryImage" },
+                            },
+                        },
+                        {
+                            $project: {
+                                _id: 0,
+                                name: "$_id",
+                                image: "$categoryImage",
+                            },
+                        },
+                    ])
+                    .toArray();
+
+                res.send(categories);
+            } catch (error) {
+                console.error("Get categories error:", error);
+                res.status(500).send({ message: "Failed to load categories" });
+            }
+        });
+
+        /* =====================
+           GET POPULAR CATEGORIES
+        ===================== */
+        app.get("/popular-categories", async (req, res) => {
+            try {
+                const categories = await productCollection
+                    .aggregate([
+                        {
+                            $group: {
+                                _id: "$category",
+                                categoryImage: { $first: "$categoryImage" },
+                                count: { $sum: 1 },
+                            },
+                        },
+                        {
+                            $project: {
+                                _id: 0,
+                                category: "$_id",
+                                categoryImage: 1,
+                                count: 1,
+                            },
+                        },
+                    ])
+                    .toArray();
+
+                res.send(categories);
+            } catch (error) {
+                console.error("Popular categories error:", error);
+                res.status(500).send({ message: "Failed to load popular categories" });
+            }
+        });
+
+
+        // UPDATE PRODUCT
+        app.put("/products/:id", verifyToken, async (req, res) => {
+            try {
+                const id = req.params.id;
+                const updatedProduct = req.body;
+
+                const result = await productCollection.updateOne(
+                    { _id: new ObjectId(id) },
+                    { $set: updatedProduct }
+                );
+
+                res.send(result);
+            } catch (error) {
+                console.error("Update product error:", error);
+                res.status(500).send({ message: "Failed to update product" });
+            }
+        });
+
+
+
+
+
+
+        // DELETE PRODUCT
+        app.delete("/products/:id", verifyToken, async (req, res) => {
+            try {
+                const id = req.params.id;
+
+                // 🔍 product exists কিনা check
+                const product = await productCollection.findOne({
+                    _id: new ObjectId(id),
+                });
+
+                if (!product) {
+                    return res.status(404).send({
+                        success: false,
+                        message: "Product not found",
+                    });
+                }
+
+                // ❌ Optional: Admin only restriction
+                // const user = await userCollection.findOne({ email: req.user.email });
+                // if (user?.role !== "admin") {
+                //   return res.status(403).send({ message: "Forbidden access" });
+                // }
+
+                const result = await productCollection.deleteOne({
+                    _id: new ObjectId(id),
+                });
+
+                res.send({
+                    success: true,
+                    deletedCount: result.deletedCount,
+                });
+
+            } catch (error) {
+                console.error("Delete product error:", error);
+                res.status(500).send({
+                    success: false,
+                    message: "Failed to delete product",
+                });
+            }
+        });
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
@@ -248,7 +402,7 @@ async function run() {
               SAVE Cart Products
          ===================== */
 
-        app.post('/carts', verifyToken, async (req, res) => {
+        app.post("/carts", verifyToken, async (req, res) => {
             try {
                 const product = req.body;
 
@@ -257,7 +411,6 @@ async function run() {
                     return res.status(403).send({ message: "Forbidden" });
                 }
 
-                // 🔍 Product find
                 const dbProduct = await productCollection.findOne({
                     _id: new ObjectId(product.productId),
                 });
@@ -266,12 +419,18 @@ async function run() {
                     return res.status(404).send({ message: "Product not found" });
                 }
 
-                // ❌ Out of stock
-                if (dbProduct.quantity <= 0) {
-                    return res.status(400).send({ message: "Product is out of stock" });
+                // ❌ invalid cartQuantity
+                if (!product.cartQuantity || product.cartQuantity < 1) {
+                    return res.status(400).send({ message: "Invalid quantity" });
                 }
 
-                // 🔒 client _id remove
+                // ❌ stock exceeded
+                if (product.cartQuantity > dbProduct.quantity) {
+                    return res.status(400).send({
+                        message: "Stock limit exceeded",
+                    });
+                }
+
                 if (product._id) delete product._id;
 
                 const result = await cartCollection.insertOne(product);
@@ -305,19 +464,51 @@ async function run() {
 
         // PATCH update quantity
         app.patch("/carts/:id", verifyToken, async (req, res) => {
-            const id = req.params.id;
-            const { cartQuantity } = req.body;
+            try {
+                const id = req.params.id;
+                const { cartQuantity } = req.body;
 
-            if (cartQuantity < 1) {
-                return res.status(400).send({ message: "Invalid quantity" });
+                if (!cartQuantity || cartQuantity < 1) {
+                    return res.status(400).send({ message: "Invalid quantity" });
+                }
+
+                // 🔍 find cart item
+                const cartItem = await cartCollection.findOne({
+                    _id: new ObjectId(id),
+                    userEmail: req.user.email,
+                });
+
+                if (!cartItem) {
+                    return res.status(404).send({ message: "Cart item not found" });
+                }
+
+                // 🔍 find product
+                const dbProduct = await productCollection.findOne({
+                    _id: new ObjectId(cartItem.productId),
+                });
+
+                if (!dbProduct) {
+                    return res.status(404).send({ message: "Product not found" });
+                }
+
+                // ❌ stock exceeded
+                if (cartQuantity > dbProduct.quantity) {
+                    return res.status(400).send({
+                        message: "Stock limit exceeded",
+                    });
+                }
+
+                const result = await cartCollection.updateOne(
+                    { _id: new ObjectId(id) },
+                    { $set: { cartQuantity } }
+                );
+
+                res.send(result);
+
+            } catch (error) {
+                console.error("Cart update error:", error);
+                res.status(500).send({ message: "Failed to update quantity" });
             }
-
-            const result = await cartCollection.updateOne(
-                { _id: new ObjectId(id), userEmail: req.user.email },
-                { $set: { cartQuantity } }
-            );
-
-            res.send(result);
         });
 
 
@@ -505,12 +696,22 @@ async function run() {
 
 
 
-        app.get('/orders', async (req, res) => {
-            const result = await ordersCollection.find().toArray()
-            res.send(result)
-        })
+        // app.get('/orders', async (req, res) => {
+        //     const result = await ordersCollection.find().toArray()
+        //     res.send(result)
+        // })
 
+        app.get("/customer-orders/:email", verifyToken, async (req, res) => {
+            if (req.user.email !== req.params.email) {
+                return res.status(403).send({ message: "Forbidden" });
+            }
 
+            const orders = await ordersCollection.find({
+                userEmail: req.params.email,
+            }).toArray();
+
+            res.send(orders);
+        });
 
 
 
