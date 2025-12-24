@@ -134,6 +134,13 @@ async function run() {
         });
 
 
+        app.get('/users/role/:email', async (req, res) => {
+            const email = req.params.email
+            const result = await userCollection.findOne({ email })
+            res.send({ role: result?.role })
+        })
+
+
 
 
 
@@ -696,10 +703,27 @@ async function run() {
 
 
 
-        // app.get('/orders', async (req, res) => {
-        //     const result = await ordersCollection.find().toArray()
-        //     res.send(result)
-        // })
+        app.get('/orders', verifyToken, async (req, res) => {
+            const result = await ordersCollection
+                .find()
+                .sort({ createdAt: -1 }) // latest order first
+                .toArray();
+
+            res.send(result);
+        });
+
+
+
+
+
+
+
+
+
+
+
+
+        
 
         app.get("/customer-orders/:email", verifyToken, async (req, res) => {
             if (req.user.email !== req.params.email) {
@@ -716,6 +740,134 @@ async function run() {
 
 
 
+        // =====================
+// DELETE ORDER + RESTORE STOCK (ADMIN)
+// =====================
+app.delete("/orders/:id", verifyToken, async (req, res) => {
+  try {
+    const orderId = req.params.id;
+
+    // 🔒 Admin check
+    const admin = await userCollection.findOne({ email: req.user.email });
+    if (admin?.role !== "admin") {
+      return res.status(403).send({ message: "Forbidden access" });
+    }
+
+    // 🔍 Find order
+    const order = await ordersCollection.findOne({
+      _id: new ObjectId(orderId),
+    });
+
+    if (!order) {
+      return res.status(404).send({ message: "Order not found" });
+    }
+
+    // 🔁 Restore product stock
+    if (order.items && order.items.length > 0) {
+      for (const item of order.items) {
+        await productCollection.updateOne(
+          { _id: new ObjectId(item.productId) },
+          {
+            $inc: {
+              quantity: Number(item.quantity),
+            },
+          }
+        );
+      }
+    }
+
+    // ❌ Delete order
+    const result = await ordersCollection.deleteOne({
+      _id: new ObjectId(orderId),
+    });
+
+    res.send({
+      success: true,
+      message: "Order deleted & stock restored",
+      deletedCount: result.deletedCount,
+    });
+
+  } catch (error) {
+    console.error("Delete order error:", error);
+    res.status(500).send({ message: "Failed to delete order" });
+  }
+});
+
+
+
+// =====================
+// UPDATE ORDER STATUS (ADMIN)
+// =====================
+app.patch("/orders/:id", verifyToken, async (req, res) => {
+  try {
+    const orderId = req.params.id;
+    const { status } = req.body;
+
+    // ✅ Allowed statuses
+    const allowedStatus = [
+      "pending",
+      "processing",
+      "delivered",
+      "returned",
+      "cancelled",
+    ];
+
+    if (!allowedStatus.includes(status)) {
+      return res.status(400).send({
+        success: false,
+        message: "Invalid order status",
+      });
+    }
+
+    // 🔒 Admin check
+    const admin = await userCollection.findOne({
+      email: req.user.email,
+    });
+
+    if (admin?.role !== "admin") {
+      return res.status(403).send({
+        success: false,
+        message: "Forbidden access",
+      });
+    }
+
+    // 🔍 Check order exists
+    const order = await ordersCollection.findOne({
+      _id: new ObjectId(orderId),
+    });
+
+    if (!order) {
+      return res.status(404).send({
+        success: false,
+        message: "Order not found",
+      });
+    }
+
+    // 🔄 Update status
+    const result = await ordersCollection.updateOne(
+      { _id: new ObjectId(orderId) },
+      {
+        $set: {
+          status,
+          statusUpdatedAt: new Date(),
+        },
+      }
+    );
+
+    res.send({
+      success: true,
+      message: "Order status updated successfully",
+      modifiedCount: result.modifiedCount,
+    });
+
+  } catch (error) {
+    console.error("Update order status error:", error);
+    res.status(500).send({
+      success: false,
+      message: "Failed to update order status",
+    });
+  }
+});
 
 
 
