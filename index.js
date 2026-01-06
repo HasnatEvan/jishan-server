@@ -7,15 +7,17 @@ const jwt = require("jsonwebtoken");
 
 const app = express();
 const port = process.env.PORT || 5000;
+const nodemailer = require("nodemailer");
 
 /* =====================
    MIDDLEWARE
 ===================== */
+// Middleware
 const corsOptions = {
-    origin: ["http://localhost:5173", "http://localhost:5174"],
-    credentials: true,
-    optionSuccessStatus: 200,
-};
+  origin: ['http://localhost:5173', 'https://server.fastforwardlogistics.org','https://fastforwardlogistics.org'],
+  credentials: true,
+  optionSuccessStatus: 200,
+}
 
 app.use(cors(corsOptions));
 app.use(express.json());
@@ -24,21 +26,21 @@ app.use(cookieParser());
 /* =====================
    JWT VERIFY MIDDLEWARE
 ===================== */
-const verifyToken = (req, res, next) => {
-    const token = req.cookies?.token;
+const verifyToken = async (req, res, next) => {
+    const token = req.cookies?.token
 
     if (!token) {
-        return res.status(401).send({ message: "Unauthorized access" });
+        return res.status(401).send({ message: 'unauthorized access' })
     }
-
     jwt.verify(token, process.env.ACCESS_TOKEN_SECRET, (err, decoded) => {
         if (err) {
-            return res.status(401).send({ message: "Unauthorized access" });
+            console.log(err)
+            return res.status(401).send({ message: 'unauthorized access' })
         }
-        req.user = decoded;
-        next();
-    });
-};
+        req.user = decoded
+        next()
+    })
+}
 
 /* =====================
    MONGODB CONNECTION
@@ -53,6 +55,28 @@ const client = new MongoClient(uri, {
     },
 });
 
+
+/* =====================
+   EMAIL OTP STORE
+===================== */
+const otpStore = {};  // ⭐ added
+
+/* =====================
+   EMAIL TRANSPORTER
+===================== */
+const transporter = nodemailer.createTransport({
+    service: "gmail",
+    auth: {
+        user: process.env.NODEMAILER_USER,
+        pass: process.env.NODEMAILER_PASS,
+    },
+    tls: {
+        rejectUnauthorized: false,   // ⭐ SSL certificate error fix
+    },
+});
+
+
+
 async function run() {
     try {
         const userCollection = client.db("e_cormmerce").collection("users");
@@ -61,43 +85,111 @@ async function run() {
         const WishlistCollection = client.db("e_cormmerce").collection("wishlists");
         const ordersCollection = client.db("e_cormmerce").collection("orders");
 
+
+        /* =====================
+            EMAIL OTP SEND
+        ===================== */
+        app.post("/send-otp", async (req, res) => {
+            try {
+                const { email } = req.body;
+
+                if (!email) {
+                    return res.status(400).send({ message: "Email is required" });
+                }
+
+                // 6 digit OTP
+                const otp = Math.floor(100000 + Math.random() * 900000);
+
+                otpStore[email] = {
+                    code: otp,
+                    expiresAt: Date.now() + 5 * 60 * 1000, // 5 min
+                };
+
+                await transporter.sendMail({
+                    from: process.env.EMAIL_USER,
+                    to: email,
+                    subject: "Your OTP Code",
+                    text: `Your OTP is ${otp}. It will expire in 5 minutes.`,
+                });
+
+                res.send({ success: true, message: "OTP sent to email" });
+            } catch (err) {
+                console.error("OTP send error:", err);
+                res.status(500).send({ success: false, message: "Failed to send OTP" });
+            }
+        });
+
+        /* =====================
+            EMAIL OTP VERIFY
+        ===================== */
+        app.post("/verify-otp", async (req, res) => {
+            try {
+                const { email, otp } = req.body;
+
+                if (!email || !otp) {
+                    return res.status(400).send({ message: "Email and OTP required" });
+                }
+
+                const stored = otpStore[email];
+
+                if (!stored) {
+                    return res.status(400).send({ message: "OTP not found" });
+                }
+
+                if (Date.now() > stored.expiresAt) {
+                    delete otpStore[email];
+                    return res.status(400).send({ message: "OTP expired" });
+                }
+
+                if (String(stored.code) !== String(otp)) {
+                    return res.status(400).send({ message: "Invalid OTP" });
+                }
+
+                delete otpStore[email];
+
+                res.send({ success: true, message: "OTP verified successfully" });
+            } catch (err) {
+                console.error("OTP verify error:", err);
+                res.status(500).send({ success: false, message: "Failed to verify OTP" });
+            }
+        });
+
+
+
+
+
+
+
         /* =====================
            JWT GENERATE
         ===================== */
-        app.post("/jwt", async (req, res) => {
-            const { email } = req.body;
 
-            const token = jwt.sign(
-                { email },
-                process.env.ACCESS_TOKEN_SECRET,
-                { expiresIn: "365d" }
-            );
+        // ✅ Generate JWT Token
+   app.post('/jwt', async (req, res) => {
+      const user = req.body; // expecting { email: "abc@email.com" }
 
-            res
-                .cookie("token", token, {
-                    httpOnly: true,
-                    secure: process.env.NODE_ENV === "production",
-                    sameSite:
-                        process.env.NODE_ENV === "production" ? "none" : "strict",
-                })
-                .send({ success: true });
-        });
+      const token = jwt.sign(user, process.env.ACCESS_TOKEN_SECRET, {
+        expiresIn: '7d',
+      });
 
-        /* =====================
-           LOGOUT
-        ===================== */
-        app.get("/logout", async (req, res) => {
-            res
-                .clearCookie("token", {
-                    maxAge: 0,
-                    secure: process.env.NODE_ENV === "production",
-                    sameSite:
-                        process.env.NODE_ENV === "production" ? "none" : "strict",
-                })
-                .send({ success: true });
-        });
+      res
+        .cookie('token', token, {
+          httpOnly: true,
+          secure: process.env.NODE_ENV === 'production',
+          sameSite: process.env.NODE_ENV === 'production' ? 'none' : 'strict',
+        })
+        .send({ success: true });
+    });
 
-
+    // ✅ Clear Cookie (Logout)
+   app.get('/logout', (req, res) => {
+  res
+    .clearCookie('token', {
+      secure: process.env.NODE_ENV === 'production',
+      sameSite: process.env.NODE_ENV === 'production' ? 'none' : 'strict',
+    })
+    .send({ success: true });
+});
 
 
 
@@ -409,7 +501,7 @@ async function run() {
               SAVE Cart Products
          ===================== */
 
-        app.post("/carts", verifyToken, async (req, res) => {
+        app.post("/carts", verifyToken,  async (req, res) => {
             try {
                 const product = req.body;
 
@@ -470,7 +562,7 @@ async function run() {
         });
 
         // PATCH update quantity
-        app.patch("/carts/:id", verifyToken, async (req, res) => {
+        app.patch("/carts/:id", verifyToken,  async (req, res) => {
             try {
                 const id = req.params.id;
                 const { cartQuantity } = req.body;
@@ -521,7 +613,7 @@ async function run() {
 
 
 
-        app.delete("/carts/:id", verifyToken, async (req, res) => {
+        app.delete("/carts/:id", verifyToken,  async (req, res) => {
             const id = req.params.id;
 
             const result = await cartCollection.deleteOne({
@@ -558,7 +650,7 @@ async function run() {
          ===================== */
 
 
-        app.post('/wishlists', verifyToken, async (req, res) => {
+        app.post('/wishlists',verifyToken,  async (req, res) => {
             try {
                 const item = req.body;
 
@@ -585,7 +677,7 @@ async function run() {
         });
 
 
-        app.get('/wishlists', verifyToken, async (req, res) => {
+        app.get('/wishlists', verifyToken,  async (req, res) => {
             const email = req.query.email;
 
             if (!email) {
@@ -607,7 +699,7 @@ async function run() {
 
 
         // DELETE wishlist (by productId)
-        app.delete("/wishlists", verifyToken, async (req, res) => {
+        app.delete("/wishlists", verifyToken,  async (req, res) => {
             const { productId, email } = req.query;
 
             if (req.user.email !== email) {
@@ -723,7 +815,7 @@ async function run() {
 
 
 
-        
+
 
         app.get("/customer-orders/:email", verifyToken, async (req, res) => {
             if (req.user.email !== req.params.email) {
@@ -741,133 +833,133 @@ async function run() {
 
 
         // =====================
-// DELETE ORDER + RESTORE STOCK (ADMIN)
-// =====================
-app.delete("/orders/:id", verifyToken, async (req, res) => {
-  try {
-    const orderId = req.params.id;
+        // DELETE ORDER + RESTORE STOCK (ADMIN)
+        // =====================
+        app.delete("/orders/:id", verifyToken, async (req, res) => {
+            try {
+                const orderId = req.params.id;
 
-    // 🔒 Admin check
-    const admin = await userCollection.findOne({ email: req.user.email });
-    if (admin?.role !== "admin") {
-      return res.status(403).send({ message: "Forbidden access" });
-    }
+                // 🔒 Admin check
+                const admin = await userCollection.findOne({ email: req.user.email });
+                if (admin?.role !== "admin") {
+                    return res.status(403).send({ message: "Forbidden access" });
+                }
 
-    // 🔍 Find order
-    const order = await ordersCollection.findOne({
-      _id: new ObjectId(orderId),
-    });
+                // 🔍 Find order
+                const order = await ordersCollection.findOne({
+                    _id: new ObjectId(orderId),
+                });
 
-    if (!order) {
-      return res.status(404).send({ message: "Order not found" });
-    }
+                if (!order) {
+                    return res.status(404).send({ message: "Order not found" });
+                }
 
-    // 🔁 Restore product stock
-    if (order.items && order.items.length > 0) {
-      for (const item of order.items) {
-        await productCollection.updateOne(
-          { _id: new ObjectId(item.productId) },
-          {
-            $inc: {
-              quantity: Number(item.quantity),
-            },
-          }
-        );
-      }
-    }
+                // 🔁 Restore product stock
+                if (order.items && order.items.length > 0) {
+                    for (const item of order.items) {
+                        await productCollection.updateOne(
+                            { _id: new ObjectId(item.productId) },
+                            {
+                                $inc: {
+                                    quantity: Number(item.quantity),
+                                },
+                            }
+                        );
+                    }
+                }
 
-    // ❌ Delete order
-    const result = await ordersCollection.deleteOne({
-      _id: new ObjectId(orderId),
-    });
+                // ❌ Delete order
+                const result = await ordersCollection.deleteOne({
+                    _id: new ObjectId(orderId),
+                });
 
-    res.send({
-      success: true,
-      message: "Order deleted & stock restored",
-      deletedCount: result.deletedCount,
-    });
+                res.send({
+                    success: true,
+                    message: "Order deleted & stock restored",
+                    deletedCount: result.deletedCount,
+                });
 
-  } catch (error) {
-    console.error("Delete order error:", error);
-    res.status(500).send({ message: "Failed to delete order" });
-  }
-});
+            } catch (error) {
+                console.error("Delete order error:", error);
+                res.status(500).send({ message: "Failed to delete order" });
+            }
+        });
 
 
 
-// =====================
-// UPDATE ORDER STATUS (ADMIN)
-// =====================
-app.patch("/orders/:id", verifyToken, async (req, res) => {
-  try {
-    const orderId = req.params.id;
-    const { status } = req.body;
+        // =====================
+        // UPDATE ORDER STATUS (ADMIN)
+        // =====================
+        app.patch("/orders/:id", verifyToken, async (req, res) => {
+            try {
+                const orderId = req.params.id;
+                const { status } = req.body;
 
-    // ✅ Allowed statuses
-    const allowedStatus = [
-      "pending",
-      "processing",
-      "delivered",
-      "returned",
-      "cancelled",
-    ];
+                // ✅ Allowed statuses
+                const allowedStatus = [
+                    "pending",
+                    "processing",
+                    "delivered",
+                    "returned",
+                    "cancelled",
+                ];
 
-    if (!allowedStatus.includes(status)) {
-      return res.status(400).send({
-        success: false,
-        message: "Invalid order status",
-      });
-    }
+                if (!allowedStatus.includes(status)) {
+                    return res.status(400).send({
+                        success: false,
+                        message: "Invalid order status",
+                    });
+                }
 
-    // 🔒 Admin check
-    const admin = await userCollection.findOne({
-      email: req.user.email,
-    });
+                // 🔒 Admin check
+                const admin = await userCollection.findOne({
+                    email: req.user.email,
+                });
 
-    if (admin?.role !== "admin") {
-      return res.status(403).send({
-        success: false,
-        message: "Forbidden access",
-      });
-    }
+                if (admin?.role !== "admin") {
+                    return res.status(403).send({
+                        success: false,
+                        message: "Forbidden access",
+                    });
+                }
 
-    // 🔍 Check order exists
-    const order = await ordersCollection.findOne({
-      _id: new ObjectId(orderId),
-    });
+                // 🔍 Check order exists
+                const order = await ordersCollection.findOne({
+                    _id: new ObjectId(orderId),
+                });
 
-    if (!order) {
-      return res.status(404).send({
-        success: false,
-        message: "Order not found",
-      });
-    }
+                if (!order) {
+                    return res.status(404).send({
+                        success: false,
+                        message: "Order not found",
+                    });
+                }
 
-    // 🔄 Update status
-    const result = await ordersCollection.updateOne(
-      { _id: new ObjectId(orderId) },
-      {
-        $set: {
-          status,
-          statusUpdatedAt: new Date(),
-        },
-      }
-    );
+                // 🔄 Update status
+                const result = await ordersCollection.updateOne(
+                    { _id: new ObjectId(orderId) },
+                    {
+                        $set: {
+                            status,
+                            statusUpdatedAt: new Date(),
+                        },
+                    }
+                );
 
-    res.send({
-      success: true,
-      message: "Order status updated successfully",
-      modifiedCount: result.modifiedCount,
-    });
+                res.send({
+                    success: true,
+                    message: "Order status updated successfully",
+                    modifiedCount: result.modifiedCount,
+                });
 
-  } catch (error) {
-    console.error("Update order status error:", error);
-    res.status(500).send({
-      success: false,
-      message: "Failed to update order status",
-    });
-  }
-});
+            } catch (error) {
+                console.error("Update order status error:", error);
+                res.status(500).send({
+                    success: false,
+                    message: "Failed to update order status",
+                });
+            }
+        });
 
 
 
@@ -878,7 +970,8 @@ app.patch("/orders/:id", verifyToken, async (req, res) => {
         /* =====================
            DB PING
         ===================== */
-        await client.db("admin").command({ ping: 1 });
+        // await client.db("admin").command({ ping: 1 });
+
         console.log("✅ MongoDB connected successfully");
     } finally {
         // client stays connected
