@@ -501,45 +501,47 @@ async function run() {
               SAVE Cart Products
          ===================== */
 
-        app.post("/carts", verifyToken,  async (req, res) => {
-            try {
-                const product = req.body;
+     app.post("/carts", async (req, res) => {
+  try {
+    const product = req.body;
 
-                // 🔒 owner check
-                if (product.userEmail !== req.user.email) {
-                    return res.status(403).send({ message: "Forbidden" });
-                }
+    // must have email
+    if (!product.userEmail) {
+      return res.status(400).send({ message: "User email missing" });
+    }
 
-                const dbProduct = await productCollection.findOne({
-                    _id: new ObjectId(product.productId),
-                });
+    // find product in DB
+    const dbProduct = await productCollection.findOne({
+      _id: new ObjectId(product.productId),
+    });
 
-                if (!dbProduct) {
-                    return res.status(404).send({ message: "Product not found" });
-                }
+    if (!dbProduct) {
+      return res.status(404).send({ message: "Product not found" });
+    }
 
-                // ❌ invalid cartQuantity
-                if (!product.cartQuantity || product.cartQuantity < 1) {
-                    return res.status(400).send({ message: "Invalid quantity" });
-                }
+    // invalid quantity
+    if (!product.cartQuantity || product.cartQuantity < 1) {
+      return res.status(400).send({ message: "Invalid quantity" });
+    }
 
-                // ❌ stock exceeded
-                if (product.cartQuantity > dbProduct.quantity) {
-                    return res.status(400).send({
-                        message: "Stock limit exceeded",
-                    });
-                }
+    // stock exceeded
+    if (product.cartQuantity > dbProduct.quantity) {
+      return res.status(400).send({
+        message: "Stock limit exceeded",
+      });
+    }
 
-                if (product._id) delete product._id;
+    if (product._id) delete product._id;
 
-                const result = await cartCollection.insertOne(product);
-                res.send(result);
+    const result = await cartCollection.insertOne(product);
+    res.send(result);
 
-            } catch (error) {
-                console.error("Cart insert error:", error);
-                res.status(500).send({ message: "Failed to add to cart" });
-            }
-        });
+  } catch (error) {
+    console.error("Cart insert error:", error);
+    res.status(500).send({ message: "Failed to add to cart" });
+  }
+});
+
 
 
 
@@ -547,86 +549,82 @@ async function run() {
         // //     const result = await cartCollection.find().toArray()
         // //     res.send(result)
         // })
-        app.get('/carts', verifyToken, async (req, res) => {
-            const email = req.query.email;
+       app.get("/carts", async (req, res) => {
+  const email = req.query.email;
 
-            if (req.user.email !== email) {
-                return res.status(403).send({ message: "Forbidden" });
-            }
+  if (!email) {
+    return res.status(400).send({ message: "Email required" });
+  }
 
-            const result = await cartCollection
-                .find({ userEmail: email })
-                .toArray();
+  const result = await cartCollection
+    .find({ userEmail: email })
+    .toArray();
 
-            res.send(result);
-        });
+  res.send(result);
+});
+
 
         // PATCH update quantity
-        app.patch("/carts/:id", verifyToken,  async (req, res) => {
-            try {
-                const id = req.params.id;
-                const { cartQuantity } = req.body;
+      app.patch("/carts/:id", async (req, res) => {
+  try {
+    const id = req.params.id;
+    const { cartQuantity } = req.body;
 
-                if (!cartQuantity || cartQuantity < 1) {
-                    return res.status(400).send({ message: "Invalid quantity" });
-                }
+    if (!cartQuantity || cartQuantity < 1) {
+      return res.status(400).send({ message: "Invalid quantity" });
+    }
 
-                // 🔍 find cart item
-                const cartItem = await cartCollection.findOne({
-                    _id: new ObjectId(id),
-                    userEmail: req.user.email,
-                });
+    const cartItem = await cartCollection.findOne({
+      _id: new ObjectId(id),
+    });
 
-                if (!cartItem) {
-                    return res.status(404).send({ message: "Cart item not found" });
-                }
+    if (!cartItem) {
+      return res.status(404).send({ message: "Cart item not found" });
+    }
 
-                // 🔍 find product
-                const dbProduct = await productCollection.findOne({
-                    _id: new ObjectId(cartItem.productId),
-                });
+    const dbProduct = await productCollection.findOne({
+      _id: new ObjectId(cartItem.productId),
+    });
 
-                if (!dbProduct) {
-                    return res.status(404).send({ message: "Product not found" });
-                }
+    if (!dbProduct) {
+      return res.status(404).send({ message: "Product not found" });
+    }
 
-                // ❌ stock exceeded
-                if (cartQuantity > dbProduct.quantity) {
-                    return res.status(400).send({
-                        message: "Stock limit exceeded",
-                    });
-                }
+    if (cartQuantity > dbProduct.quantity) {
+      return res.status(400).send({
+        message: "Stock limit exceeded",
+      });
+    }
 
-                const result = await cartCollection.updateOne(
-                    { _id: new ObjectId(id) },
-                    { $set: { cartQuantity } }
-                );
+    const result = await cartCollection.updateOne(
+      { _id: new ObjectId(id) },
+      { $set: { cartQuantity } }
+    );
 
-                res.send(result);
+    res.send(result);
 
-            } catch (error) {
-                console.error("Cart update error:", error);
-                res.status(500).send({ message: "Failed to update quantity" });
-            }
-        });
+  } catch (error) {
+    console.error("Cart update error:", error);
+    res.status(500).send({ message: "Failed to update quantity" });
+  }
+});
 
 
 
 
-        app.delete("/carts/:id", verifyToken,  async (req, res) => {
-            const id = req.params.id;
+        app.delete("/carts/:id", async (req, res) => {
+  const id = req.params.id;
 
-            const result = await cartCollection.deleteOne({
-                _id: new ObjectId(id),
-                userEmail: req.user.email, // 🔒 owner check
-            });
+  const result = await cartCollection.deleteOne({
+    _id: new ObjectId(id),
+  });
 
-            if (result.deletedCount === 0) {
-                return res.status(404).send({ message: "Item not found" });
-            }
+  if (result.deletedCount === 0) {
+    return res.status(404).send({ message: "Item not found" });
+  }
 
-            res.send(result);
-        });
+  res.send(result);
+});
 
 
 
@@ -649,70 +647,83 @@ async function run() {
               SAVE Favorite Products
          ===================== */
 
+app.post('/wishlists', async (req, res) => {
+  try {
+    const item = req.body;
 
-        app.post('/wishlists',verifyToken,  async (req, res) => {
-            try {
-                const item = req.body;
+    if (!item?.userEmail || !item?.productId) {
+      return res.status(400).send({ message: "Missing data" });
+    }
 
-                // 🔒 client থেকে আসা _id remove
-                if (item._id) delete item._id;
+    // remove _id if sent
+    if (item._id) delete item._id;
 
-                // 🔁 already wishlist এ আছে কিনা check
-                const exists = await WishlistCollection.findOne({
-                    productId: item.productId,
-                    userEmail: item.userEmail
-                });
+    // already exists?
+    const exists = await WishlistCollection.findOne({
+      productId: item.productId,
+      userEmail: item.userEmail
+    });
 
-                if (exists) {
-                    return res.status(409).send({ message: "Already in wishlist" });
-                }
+    if (exists) {
+      return res.status(409).send({ message: "Already in wishlist" });
+    }
 
-                const result = await WishlistCollection.insertOne(item);
-                res.send(result);
+    const result = await WishlistCollection.insertOne(item);
+    res.send(result);
 
-            } catch (error) {
-                console.error("Wishlist error:", error);
-                res.status(500).send({ message: "Failed to add wishlist" });
-            }
-        });
+  } catch (error) {
+    console.error("Wishlist add error:", error);
+    res.status(500).send({ message: "Failed to add wishlist" });
+  }
+});
 
 
-        app.get('/wishlists', verifyToken,  async (req, res) => {
-            const email = req.query.email;
 
-            if (!email) {
-                return res.status(400).send({ message: "Email is required" });
-            }
+       app.get('/wishlists', async (req, res) => {
+  const email = req.query.email;
 
-            // 🔒 token user & query email match
-            if (req.user.email !== email) {
-                return res.status(403).send({ message: "Forbidden access" });
-            }
+  if (!email) {
+    return res.status(400).send({ message: "Email is required" });
+  }
 
-            const result = await WishlistCollection
-                .find({ userEmail: email })
-                .toArray();
+  try {
+    const result = await WishlistCollection
+      .find({ userEmail: email })
+      .toArray();
 
-            res.send(result);
-        });
+    res.send(result);
+  } catch (error) {
+    console.error("Wishlist fetch error:", error);
+    res.status(500).send({ message: "Failed to get wishlist" });
+  }
+});
 
 
 
         // DELETE wishlist (by productId)
-        app.delete("/wishlists", verifyToken,  async (req, res) => {
-            const { productId, email } = req.query;
+       app.delete('/wishlists', async (req, res) => {
+  const { productId, email } = req.query;
 
-            if (req.user.email !== email) {
-                return res.status(403).send({ message: "Forbidden" });
-            }
+  if (!productId || !email) {
+    return res.status(400).send({ message: "productId and email required" });
+  }
 
-            const result = await WishlistCollection.deleteOne({
-                productId,
-                userEmail: email,
-            });
+  try {
+    const result = await WishlistCollection.deleteOne({
+      productId,
+      userEmail: email
+    });
 
-            res.send(result);
-        });
+    if (result.deletedCount === 0) {
+      return res.status(404).send({ message: "Item not found" });
+    }
+
+    res.send(result);
+  } catch (error) {
+    console.error("Wishlist delete error:", error);
+    res.status(500).send({ message: "Failed to delete item" });
+  }
+});
 
 
 
@@ -816,18 +827,17 @@ async function run() {
 
 
 
+app.get("/customer-orders/:email", async (req, res) => {
+  try {
+    const orders = await ordersCollection
+      .find({ userEmail: req.params.email })
+      .toArray();
 
-        app.get("/customer-orders/:email", verifyToken, async (req, res) => {
-            if (req.user.email !== req.params.email) {
-                return res.status(403).send({ message: "Forbidden" });
-            }
-
-            const orders = await ordersCollection.find({
-                userEmail: req.params.email,
-            }).toArray();
-
-            res.send(orders);
-        });
+    res.send(orders);
+  } catch (error) {
+    res.status(500).send({ message: "Something went wrong" });
+  }
+});
 
 
 
@@ -984,7 +994,7 @@ run().catch(console.dir);
    ROOT
 ===================== */
 app.get("/", (req, res) => {
-    res.send("Hello from plantNet Server..");
+    res.send("Hello froms plantNet Server..");
 });
 
 app.listen(port, () => {
